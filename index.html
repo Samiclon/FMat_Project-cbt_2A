@@ -20,13 +20,18 @@ input,button,select{font-family:inherit;}
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback}=React;
 
-const ADMIN_CODE = "SS2A_SECURE_2026_ADMIN!";
+/* ══════════════════════════════════════════════════════════
+   CONFIG  — edit these before deployment
+══════════════════════════════════════════════════════════ */
+const ADMIN_CODE = "SS2A_SECURE_2026_ADMIN!";   // keep secret
 const DURATION_S = 75 * 60;
 const MAX_VIOL   = 3;
 const PENALTY_PT = 0.5;
 
+// ── ID FORMAT: 6-character alphanumeric (e.g. ASDFGH, TD55JH) ──
 const ID_REGEX = /^[A-Z0-9]{6}$/;
 
+// ── QUESTION QUOTA PER TOPIC ────────────────────────────
 const QUOTA = {
   "Equations of a Circle": 4,
   "Tangent to a Circle":   2,
@@ -36,6 +41,9 @@ const QUOTA = {
   "Binomial Expansion":    4,
 };
 
+// ── STUDENT REGISTRY: {id → full name} ─────────────────
+// Add every registered student here before deployment.
+// Students cannot log in with an ID not on this list.
 const REGISTRY = {
   "YSWBFG": "Itanola Macarthy",
   "CWHKTM": "Ekpo Annette",
@@ -47,9 +55,11 @@ const REGISTRY = {
   "8TXX5Z": "John Jessica Patient",
   "KLZSWV": "Sunday Delight Ubong",
   "QRLAUJ": "Adedunmoye Grace Chidima",
-  "DQ73SF": "Oriola Olanrewaju Nurudeen",
 };
 
+/* ══════════════════════════════════════════════════════════
+   QUESTION BANK (46 questions)
+══════════════════════════════════════════════════════════ */
 const QB = [
   {id:"c1",topic:"Equations of a Circle",q:"What is the equation of a circle with centre (3, −4) and radius 5?",opts:["(x−3)²+(y+4)²=25","(x+3)²+(y−4)²=25","(x−3)²+(y−4)²=25","(x−3)²+(y+4)²=5"],ans:"(x−3)²+(y+4)²=25"},
   {id:"c2",topic:"Equations of a Circle",q:"Find the centre of the circle x²+y²−6x+8y+9=0.",opts:["(3,−4)","(−3,4)","(6,−8)","(3,4)"],ans:"(3,−4)"},
@@ -99,8 +109,11 @@ const QB = [
   {id:"b8",topic:"Binomial Expansion",q:"Find the sum of coefficients in (1+x)⁵ when x=1.",opts:["32","16","64","10"],ans:"32"},
 ];
 
+/* ══════════════════════════════════════════════════════════
+   UTILS
+══════════════════════════════════════════════════════════ */
 const shuffle=a=>{const b=[...a];for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]];}return b;};
-const fmt=s=>`${Math.floor(s/60).toString().padStart(2,"00")}:${(s%60).toString().padStart(2,"00")}`;
+const fmt=s=>`${Math.floor(s/60).toString().padStart(2,"0")}:${(s%60).toString().padStart(2,"0")}`;
 const gradeOf=s=>s>=16?"A":s>=14?"B":s>=12?"C":s>=8?"D":"F";
 const gc=g=>({A:"#16a34a",B:"#2563eb",C:"#d97706",D:"#ea580c",F:"#dc2626"})[g]||"#666";
 const pickQs=()=>{
@@ -110,27 +123,68 @@ const pickQs=()=>{
   return shuffle(sel);
 };
 
-const ROSTER_KEY="ss2a_cbt_roster_v2";
-const scoreKey=sid=>`ss2a_score_${sid}`;
-const retakeKey=sid=>`ss2a_retake_${sid}`;
-const sessionKey=sid=>`ss2a_session_${sid}`;
+/* ══════════════════════════════════════════════════════════
+   STORAGE — uses window.storage (shared/cross-device)
+   Falls back to localStorage if window.storage unavailable
+══════════════════════════════════════════════════════════ */
+const ROSTER_KEY   = "ss2a_cbt_roster_v2";
+const scoreKey     = sid=>`ss2a_score_${sid}`;
+const retakeKey    = sid=>`ss2a_retake_${sid}`;
+const sessionKey   = sid=>`ss2a_session_${sid}`;
+const DYN_REG_KEY  = "ss2a_dynamic_registry_v1";  // ← dynamic registry in shared storage
 
+// ── SAFE CHARS for ID generation (no I,O,0,1 to avoid confusion) ──
+const ID_CHARS="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const genId=()=>{let id="";for(let i=0;i<6;i++)id+=ID_CHARS[Math.floor(Math.random()*ID_CHARS.length)];return id;};
+const genUniqueId=used=>{let id,tries=0;do{id=genId();tries++;}while(used.has(id)&&tries<9999);return id;};
+
+// ── DYNAMIC REGISTRY HELPERS ─────────────────────────────────────
+const getDynRegistry  =async()=>(await stor.get(DYN_REG_KEY))||{};
+const saveDynRegistry =async reg=>stor.set(DYN_REG_KEY,reg);
+const addStudent      =async(sid,name)=>{const r=await getDynRegistry();r[sid]={name,added:new Date().toLocaleString("en-NG")};await saveDynRegistry(r);};
+const removeStudent   =async sid=>{const r=await getDynRegistry();delete r[sid];await saveDynRegistry(r);};
+
+// unified async storage with cross-device shared flag
 const stor={
-  async get(k){try{if(window.storage){const r=await window.storage.get(k,true);return r?JSON.parse(r.value):null;}const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}},
-  async set(k,v){try{if(window.storage){await window.storage.set(k,JSON.stringify(v),true);return;}localStorage.setItem(k,JSON.stringify(v));}catch{}},
-  async del(k){try{if(window.storage){await window.storage.delete(k,true);return;}localStorage.removeItem(k);}catch{}},
+  async get(k){
+    try{
+      if(window.storage){const r=await window.storage.get(k,true);return r?JSON.parse(r.value):null;}
+      const v=localStorage.getItem(k);return v?JSON.parse(v):null;
+    }catch{return null;}
+  },
+  async set(k,v){
+    try{
+      if(window.storage){await window.storage.set(k,JSON.stringify(v),true);return;}
+      localStorage.setItem(k,JSON.stringify(v));
+    }catch{}
+  },
+  async del(k){
+    try{
+      if(window.storage){await window.storage.delete(k,true);return;}
+      localStorage.removeItem(k);
+    }catch{}
+  },
 };
 
-const saveScore=async d=>{await stor.set(scoreKey(d.sid),d);const r=(await stor.get(ROSTER_KEY))||[];if(!r.includes(d.sid))await stor.set(ROSTER_KEY,[...r,d.sid]);};
-const getScore=sid=>stor.get(scoreKey(sid));
-const getAllScores=async()=>{const r=(await stor.get(ROSTER_KEY))||[];const out=[];for(const s of r){const sc=await stor.get(scoreKey(s));if(sc)out.push(sc);}return out;};
-const grantRetake=sid=>stor.set(retakeKey(sid),{ok:true});
-const checkRetake=async sid=>{const v=await stor.get(retakeKey(sid));return v&&v.ok===true;};
-const clearRetake=async sid=>{await stor.del(scoreKey(sid));await stor.del(retakeKey(sid));const r=(await stor.get(ROSTER_KEY))||[];await stor.set(ROSTER_KEY,r.filter(s=>s!==sid));};
-const setSession=async(sid,token)=>stor.set(sessionKey(sid),{token,ts:Date.now()});
-const getSession=sid=>stor.get(sessionKey(sid));
+const saveScore=async d=>{
+  await stor.set(scoreKey(d.sid),d);
+  const r=(await stor.get(ROSTER_KEY))||[];
+  if(!r.includes(d.sid))await stor.set(ROSTER_KEY,[...r,d.sid]);
+};
+const getScore    =sid=>stor.get(scoreKey(sid));
+const getAllScores =async()=>{const r=(await stor.get(ROSTER_KEY))||[];const out=[];for(const s of r){const sc=await stor.get(scoreKey(s));if(sc)out.push(sc);}return out;};
+const grantRetake =sid=>stor.set(retakeKey(sid),{ok:true});
+const checkRetake =async sid=>{const v=await stor.get(retakeKey(sid));return v&&v.ok===true;};
+const clearRetake =async sid=>{await stor.del(scoreKey(sid));await stor.del(retakeKey(sid));const r=(await stor.get(ROSTER_KEY))||[];await stor.set(ROSTER_KEY,r.filter(s=>s!==sid));};
+
+// session token: prevents same ID being used on two devices simultaneously
+const setSession  =async(sid,token)=>stor.set(sessionKey(sid),{token,ts:Date.now()});
+const getSession  =sid=>stor.get(sessionKey(sid));
 const clearSession=sid=>stor.del(sessionKey(sid));
 
+/* ══════════════════════════════════════════════════════════
+   CSV EXPORT
+══════════════════════════════════════════════════════════ */
 const exportCSV=scores=>{
   const hdr=["Name","Student ID","Score","Total","Percentage","Grade","Violations","Penalty","Time Taken","Date"];
   const rows=scores.map(s=>[`"${s.name}"`,s.sid,s.finalScore,s.total,s.pct+"%",s.grade,s.violations,s.penalty>0?`-${s.penalty}`:"0",`${Math.floor((s.timeTaken||0)/60)}m ${(s.timeTaken||0)%60}s`,`"${s.date}"`].join(","));
@@ -141,32 +195,51 @@ const exportCSV=scores=>{
   a.click();
 };
 
+/* ══════════════════════════════════════════════════════════
+   DESIGN TOKENS
+══════════════════════════════════════════════════════════ */
 const NAV="#1a2e5a",GOLD="#e8a020",BG="#eef1f8",FF="system-ui,-apple-system,sans-serif";
 const card={background:"#fff",borderRadius:"14px",boxShadow:"0 2px 14px rgba(0,0,0,0.09)"};
 const bi={width:"100%",boxSizing:"border-box",padding:"10px 14px",border:"2px solid #e2e8f0",borderRadius:"8px",fontSize:"14px",outline:"none",fontFamily:FF};
 const badge=(bg,tx)=>({display:"inline-block",background:bg,color:tx,padding:"3px 10px",borderRadius:"20px",fontSize:"10px",fontWeight:"700"});
 
+/* ══════════════════════════════════════════════════════════
+   MAIN APP
+══════════════════════════════════════════════════════════ */
 function App(){
-  const[screen,setScreen]=useState("login");
-  const[student,setStudent]=useState({name:"",sid:""});
-  const[questions,setQs]=useState([]);
-  const[current,setCurrent]=useState(0);
-  const[answers,setAnswers]=useState({});
-  const[timeLeft,setTL]=useState(DURATION_S);
-  const[viol,setViol]=useState(0);
-  const[violMsg,setViolMsg]=useState("");
-  const[result,setResult]=useState(null);
-  const[allScores,setAll]=useState([]);
-  const[err,setErr]=useState("");
-  const[lSid,setLSid]=useState("");
-  const[lAdmin,setLAdmin]=useState("");
-  const[autoName,setAutoName]=useState("");
-  const[gSid,setGSid]=useState("");
-  const[gMsg,setGMsg]=useState("");
-  const[confirmSub,setCSub]=useState(false);
-  const[search,setSearch]=useState("");
-  const[loading,setLoading]=useState(false);
+  const[screen,setScreen]   =useState("login");
+  const[student,setStudent] =useState({name:"",sid:""});
+  const[questions,setQs]    =useState([]);
+  const[current,setCurrent] =useState(0);
+  const[answers,setAnswers] =useState({});
+  const[timeLeft,setTL]     =useState(DURATION_S);
+  const[viol,setViol]       =useState(0);
+  const[violMsg,setViolMsg] =useState("");
+  const[result,setResult]   =useState(null);
+  const[allScores,setAll]   =useState([]);
+  const[err,setErr]         =useState("");
+  const[lSid,setLSid]       =useState("");
+  const[lAdmin,setLAdmin]   =useState("");
+  const[autoName,setAutoName]=useState("");  // ← auto-filled from registry
+  const[gSid,setGSid]       =useState("");
+  const[gMsg,setGMsg]       =useState("");
+  const[confirmSub,setCSub] =useState(false);
+  const[search,setSearch]   =useState("");
+  const[loading,setLoading] =useState(false);
   const[sessionTok,setSessTok]=useState("");
+  // ── Dynamic Registry state ────────────────────────────
+  const[dynReg,setDynReg]   =useState({});          // loaded from shared storage
+  const[newName,setNewName] =useState("");           // add-student form
+  const[newId,setNewId]     =useState("");           // add-student form (auto or manual)
+  const[regMsg,setRegMsg]   =useState({txt:"",ok:true}); // add-student feedback
+  const[showReg,setShowReg] =useState(false);        // toggle registry panel
+
+  // merged registry = hardcoded base + dynamic additions
+  const mergedReg=React.useMemo(()=>{
+    const m={...REGISTRY};
+    Object.entries(dynReg).forEach(([id,v])=>{if(!m[id])m[id]=v.name;});
+    return m;
+  },[dynReg]);
 
   const aRef=useRef({});const tlRef=useRef(DURATION_S);const vRef=useRef(0);
   const subRef=useRef(false);const stRef=useRef({name:"",sid:""});
@@ -179,12 +252,15 @@ function App(){
   useEffect(()=>{qRef.current=questions;},[questions]);
   useEffect(()=>{sessRef.current=sessionTok;},[sessionTok]);
 
+  /* ── AUTO-FILL name when student types their ID ──────── */
   const handleSidChange=e=>{
     const val=e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,"");
     setLSid(val);setErr("");
-    if(REGISTRY[val])setAutoName(REGISTRY[val]);else setAutoName("");
+    const found=REGISTRY[val]||(dynReg[val]?.name)||"";
+    if(found)setAutoName(found);else setAutoName("");
   };
 
+  /* ── SUBMIT ────────────────────────────────────────────── */
   const submit=useCallback(async(forced=false,autoMsg="")=>{
     if(subRef.current)return;subRef.current=true;clearInterval(tmr.current);
     const qs=qRef.current,ans=aRef.current,tl=tlRef.current,v=vRef.current,st=stRef.current,tok=sessRef.current;
@@ -196,19 +272,26 @@ function App(){
       pct:+((finalScore/qs.length)*100).toFixed(1),grade:gradeOf(finalScore),
       violations:v,penalty,timeTaken:DURATION_S-tl,
       date:new Date().toLocaleString("en-NG"),topicMap,forced,autoMsg,sessionTok:tok};
-    await saveScore(data);await clearSession(st.sid);
+    await saveScore(data);
+    await clearSession(st.sid);   // release session lock on submit
     setResult(data);setScreen("result");setCSub(false);
   },[]);
 
+  /* ── TIMER ─────────────────────────────────────────────── */
   useEffect(()=>{
     if(screen!=="exam")return;
     tmr.current=setInterval(()=>{setTL(t=>{const n=t-1;tlRef.current=n;if(n<=0){clearInterval(tmr.current);submit(true,"Time expired — auto-submitted");return 0;}return n;});},1000);
     return()=>clearInterval(tmr.current);
   },[screen,submit]);
 
+  /* ── ANTI-CHEAT ─────────────────────────────────────────── */
   useEffect(()=>{
     if(screen!=="exam")return;
-    const flag=reason=>{const nv=vRef.current+1;vRef.current=nv;setViol(nv);if(nv>=MAX_VIOL){setViolMsg("");submit(true,`Auto-submitted: ${MAX_VIOL} violations detected`);}else setViolMsg(`VIOLATION ${nv}/${MAX_VIOL}: ${reason}. Penalty −${PENALTY_PT} mark. ${MAX_VIOL-nv} warning(s) left.`);};
+    const flag=reason=>{
+      const nv=vRef.current+1;vRef.current=nv;setViol(nv);
+      if(nv>=MAX_VIOL){setViolMsg("");submit(true,`Auto-submitted: ${MAX_VIOL} violations detected`);}
+      else setViolMsg(`VIOLATION ${nv}/${MAX_VIOL}: ${reason}. Penalty −${PENALTY_PT} mark. ${MAX_VIOL-nv} warning(s) left.`);
+    };
     const onVis=()=>{if(document.hidden)flag("Tab/window switch detected");};
     const onBlur=()=>flag("Browser window lost focus");
     const noCtx=e=>e.preventDefault();
@@ -219,20 +302,43 @@ function App(){
     return()=>{document.removeEventListener("visibilitychange",onVis);window.removeEventListener("blur",onBlur);document.removeEventListener("contextmenu",noCtx);document.removeEventListener("keydown",onKey);document.removeEventListener("copy",noCtx);document.removeEventListener("paste",noCtx);};
   },[screen,submit]);
 
+  /* ── SAVE ON CLOSE ─────────────────────────────────────── */
   useEffect(()=>{
     if(screen!=="exam")return;
-    const fn=()=>{if(subRef.current)return;const qs=qRef.current,ans=aRef.current,v=vRef.current,tl=tlRef.current,st=stRef.current;let c=0;qs.forEach(q=>{if(ans[q.id]===q.ans)c++;});const fs=+Math.max(0,c-v*PENALTY_PT).toFixed(1);saveScore({name:st.name,sid:st.sid,rawScore:c,finalScore:fs,total:qs.length,pct:+((fs/qs.length)*100).toFixed(1),grade:gradeOf(fs),violations:v,penalty:+(v*PENALTY_PT).toFixed(1),timeTaken:DURATION_S-tl,date:new Date().toLocaleString("en-NG"),topicMap:{},forced:true,autoMsg:"Browser closed during exam"});clearSession(st.sid);};
+    const fn=()=>{
+      if(subRef.current)return;
+      const qs=qRef.current,ans=aRef.current,v=vRef.current,tl=tlRef.current,st=stRef.current;
+      let c=0;qs.forEach(q=>{if(ans[q.id]===q.ans)c++;});
+      const fs=+Math.max(0,c-v*PENALTY_PT).toFixed(1);
+      saveScore({name:st.name,sid:st.sid,rawScore:c,finalScore:fs,total:qs.length,
+        pct:+((fs/qs.length)*100).toFixed(1),grade:gradeOf(fs),violations:v,
+        penalty:+(v*PENALTY_PT).toFixed(1),timeTaken:DURATION_S-tl,
+        date:new Date().toLocaleString("en-NG"),topicMap:{},forced:true,autoMsg:"Browser closed during exam"});
+      clearSession(st.sid);
+    };
     window.addEventListener("beforeunload",fn);return()=>window.removeEventListener("beforeunload",fn);
   },[screen]);
 
+  /* ── LOGIN ─────────────────────────────────────────────── */
   const handleLogin=async()=>{
     setErr("");
-    if(lAdmin.trim()){if(lAdmin.trim()!==ADMIN_CODE){setErr("Invalid admin code.");return;}setLoading(true);setAll(await getAllScores());setLoading(false);setScreen("admin");return;}
+    // Admin path
+    if(lAdmin.trim()){
+      if(lAdmin.trim()!==ADMIN_CODE){setErr("Invalid admin code.");return;}
+      setLoading(true);
+      const[scores,dr]=await Promise.all([getAllScores(),getDynRegistry()]);
+      setAll(scores);setDynReg(dr);
+      setLoading(false);setScreen("admin");return;
+    }
     const sid=lSid.trim().toUpperCase();
     if(!sid){setErr("Please enter your Student ID.");return;}
     if(!ID_REGEX.test(sid)){setErr("Invalid ID format. Use 6 uppercase letters/numbers (e.g. ASDFGH).");return;}
-    const regName=REGISTRY[sid];
+
+    // Check merged registry (hardcoded + dynamic)
+    const dr=await getDynRegistry();
+    const regName=REGISTRY[sid]||(dr[sid]?.name)||"";
     if(!regName){setErr(`Student ID "${sid}" is not registered for this exam. Check with your teacher.`);return;}
+
     setLoading(true);
     const existing=await getScore(sid);
     if(existing){const ok=await checkRetake(sid);if(!ok){setLoading(false);setErr(`"${sid}" has already completed this exam. Contact your teacher for a resit permission.`);return;}await clearRetake(sid);}
@@ -246,21 +352,59 @@ function App(){
     setStudent({name:regName,sid});setQs(qs);setAnswers({});setTL(DURATION_S);setViol(0);setCurrent(0);setScreen("instructions");
   };
 
+  /* ── GRANT RETAKE ──────────────────────────────────────── */
   const handleGrant=async()=>{
     const s=gSid.trim().toUpperCase();if(!s)return;
     if(!ID_REGEX.test(s)){setGMsg("⚠️ Invalid ID format.");return;}
-    if(!REGISTRY[s]){setGMsg(`⚠️ "${s}" is not in the student registry.`);return;}
+    if(!mergedReg[s]){setGMsg(`⚠️ "${s}" is not in the student registry.`);return;}
     await grantRetake(s);await clearSession(s);
-    setGMsg(`✅ Resit granted for ${s} (${REGISTRY[s]}). Session reset.`);
+    setGMsg(`✅ Resit granted for ${s} (${mergedReg[s]}). Session reset.`);
     setGSid("");setAll(await getAllScores());
   };
 
-  const handleResetSession=async sid=>{await clearSession(sid);setGMsg(`✅ Session reset for ${sid}.`);setAll(await getAllScores());};
+  /* ── RESET SESSION (admin) ─────────────────────────────── */
+  const handleResetSession=async sid=>{
+    await clearSession(sid);setGMsg(`✅ Session reset for ${sid}.`);setAll(await getAllScores());
+  };
 
+  /* ── ADD STUDENT TO DYNAMIC REGISTRY ──────────────────── */
+  const handleAddStudent=async()=>{
+    const name=newName.trim();
+    if(!name){setRegMsg({txt:"⚠️ Please enter the student's full name.",ok:false});return;}
+    // Use typed ID or auto-generate a unique one
+    const usedIds=new Set([...Object.keys(REGISTRY),...Object.keys(dynReg)]);
+    let sid=newId.trim().toUpperCase();
+    if(sid){
+      if(!ID_REGEX.test(sid)){setRegMsg({txt:"⚠️ ID must be exactly 6 letters/numbers.",ok:false});return;}
+      if(usedIds.has(sid)){setRegMsg({txt:`⚠️ ID "${sid}" is already in use.`,ok:false});return;}
+    } else {
+      sid=genUniqueId(usedIds);
+    }
+    await addStudent(sid,name);
+    const updated=await getDynRegistry();
+    setDynReg(updated);
+    setNewName("");setNewId("");
+    setRegMsg({txt:`✅ ${name} added with ID: ${sid}`,ok:true});
+  };
+
+  /* ── REMOVE STUDENT FROM DYNAMIC REGISTRY ──────────────── */
+  const handleRemoveStudent=async sid=>{
+    if(REGISTRY[sid]){setRegMsg({txt:"⚠️ Cannot remove a student from the base registry. Edit the HTML file to remove them.",ok:false});return;}
+    if(!window.confirm(`Remove "${dynReg[sid]?.name}" (${sid}) from the registry? Their exam score (if any) is NOT deleted.`))return;
+    await removeStudent(sid);
+    const updated=await getDynRegistry();
+    setDynReg(updated);
+    setRegMsg({txt:`✅ ${sid} removed from the registry.`,ok:true});
+  };
+
+  /* ── CONVENIENCE ───────────────────────────────────────── */
   const answered=Object.keys(answers).length,total=questions.length,q=questions[current];
   const timerPct=(timeLeft/DURATION_S)*100,timerClr=timeLeft<300?"#ef4444":timeLeft<1200?"#f59e0b":"#22c55e";
   const filteredScores=allScores.filter(s=>!search||s.name.toLowerCase().includes(search.toLowerCase())||s.sid.toLowerCase().includes(search.toLowerCase()));
 
+  /* ════════════════════════════════════════════════════════
+     LOGIN SCREEN
+  ════════════════════════════════════════════════════════ */
   if(screen==="login")return(
     <div style={{minHeight:"100vh",background:`linear-gradient(135deg,${NAV},#0e1c3a)`,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px",fontFamily:FF,userSelect:"none"}}>
       <div style={{...card,padding:"38px",width:"100%",maxWidth:"430px"}}>
@@ -270,33 +414,54 @@ function App(){
           <p style={{margin:"0 0 2px",fontSize:"13px",color:"#555",fontWeight:"600"}}>SS 2A — Computer Based Test</p>
           <p style={{margin:0,fontSize:"11px",color:"#999"}}>20 Questions  •  {Math.round(DURATION_S/60)} Minutes  •  6 Topics</p>
         </div>
+
+        {/* Student ID — typed first, name auto-fills */}
         <label style={{display:"block",fontSize:"11px",fontWeight:"700",color:NAV,marginBottom:"5px",textTransform:"uppercase",letterSpacing:"0.5px"}}>Student ID</label>
         <input value={lSid} onChange={handleSidChange} placeholder="Enter your 6-character ID"
           style={{...bi,marginBottom:"8px",textTransform:"uppercase",letterSpacing:"1px",fontWeight:"700",fontSize:"16px"}}
           onFocus={e=>e.target.style.borderColor=GOLD} onBlur={e=>e.target.style.borderColor="#e2e8f0"}
           onKeyDown={e=>e.key==="Enter"&&handleLogin()}/>
+
+        {/* Auto-fill name display */}
         <div style={{marginBottom:"16px",minHeight:"38px",padding:"9px 14px",borderRadius:"8px",background:autoName?"#f0f7f0":"#f8fafc",border:`1.5px solid ${autoName?"#bbddbf":"#e2e8f0"}`,display:"flex",alignItems:"center",gap:"8px"}}>
-          {autoName?<><span style={{fontSize:"16px"}}>✅</span><span style={{fontSize:"13px",fontWeight:"700",color:"#165f2d"}}>{autoName}</span><span style={{fontSize:"10px",color:"#888",marginLeft:"auto"}}>auto-detected</span></>:<span style={{fontSize:"12px",color:"#bbb",fontStyle:"italic"}}>{lSid.length===6?"ID not found in registry — check with teacher":"Your name will appear here when your ID is recognised"}</span>}
+          {autoName
+            ?<><span style={{fontSize:"16px"}}>✅</span><span style={{fontSize:"13px",fontWeight:"700",color:"#165f2d"}}>{autoName}</span><span style={{fontSize:"10px",color:"#888",marginLeft:"auto"}}>auto-detected</span></>
+            :<span style={{fontSize:"12px",color:"#bbb",fontStyle:"italic"}}>{lSid.length>=3?"ID not found in registry — check with teacher":"Your name will appear here when your ID is recognised"}</span>
+          }
         </div>
+
         <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"14px"}}>
-          <div style={{flex:1,height:"1px",background:"#e8edf5"}}/><span style={{fontSize:"10px",color:"#bbb",whiteSpace:"nowrap"}}>or administrator access</span><div style={{flex:1,height:"1px",background:"#e8edf5"}}/>
+          <div style={{flex:1,height:"1px",background:"#e8edf5"}}/>
+          <span style={{fontSize:"10px",color:"#bbb",whiteSpace:"nowrap"}}>or administrator access</span>
+          <div style={{flex:1,height:"1px",background:"#e8edf5"}}/>
         </div>
+
         <input value={lAdmin} onChange={e=>setLAdmin(e.target.value)} placeholder="Admin code" type="password"
           style={{...bi,marginBottom:"18px"}}
           onFocus={e=>e.target.style.borderColor=GOLD} onBlur={e=>e.target.style.borderColor="#e2e8f0"}
           onKeyDown={e=>e.key==="Enter"&&handleLogin()}/>
+
         {err&&<div style={{background:"#fef2f2",border:"1px solid #fecaca",borderRadius:"8px",padding:"10px 14px",fontSize:"12.5px",color:"#dc2626",marginBottom:"14px",lineHeight:"1.55"}}>{err}</div>}
+
         <button onClick={handleLogin} disabled={loading}
           style={{width:"100%",padding:"14px",background:`linear-gradient(135deg,${NAV},#2d4f8a)`,color:"#fff",border:"none",borderRadius:"10px",fontSize:"15px",fontWeight:"700",cursor:loading?"not-allowed":"pointer",opacity:loading?0.7:1,boxShadow:"0 4px 14px rgba(26,46,90,0.35)"}}>
           {loading?"⏳ Verifying…":lAdmin?"🔐 Admin Login":"🚀 Enter Exam"}
         </button>
+
         <div style={{marginTop:"16px",background:"#f8fafc",borderRadius:"8px",padding:"12px 14px"}}>
-          <p style={{fontSize:"10.5px",color:"#888",lineHeight:"1.7",margin:0}}>🔒 <b>One sitting per student</b> — your ID is locked once the exam starts.<br/>⚠️ Cheating is detected automatically and penalised.<br/>📋 Your score is saved and sent to your teacher instantly.</p>
+          <p style={{fontSize:"10.5px",color:"#888",lineHeight:"1.7",margin:0}}>
+            🔒 <b>One sitting per student</b> — your ID is locked once the exam starts.<br/>
+            ⚠️ Cheating is detected automatically and penalised.<br/>
+            📋 Your score is saved and sent to your teacher instantly.
+          </p>
         </div>
       </div>
     </div>
   );
 
+  /* ════════════════════════════════════════════════════════
+     INSTRUCTIONS
+  ════════════════════════════════════════════════════════ */
   if(screen==="instructions")return(
     <div style={{minHeight:"100vh",background:BG,fontFamily:FF,padding:"16px",userSelect:"none"}}>
       <div style={{maxWidth:"640px",margin:"0 auto"}}>
@@ -312,7 +477,19 @@ function App(){
         </div>
         <div style={{...card,padding:"20px",marginBottom:"14px"}}>
           <h3 style={{margin:"0 0 12px",fontSize:"13px",fontWeight:"700",color:NAV}}>📜 Exam Rules & Anti-Cheat Policy</h3>
-          {[["✅","Each correct answer = 1 mark. Maximum: 20 marks."],["✅","Navigate freely between questions using the palette."],["✅","You may change any answer before final submission."],["🔒","Your Student ID is now locked to this device — no other device can use it."],["⛔","Do NOT switch browser tabs — this triggers a cheat violation."],["⛔","Do NOT minimise or switch to another window — violation."],["⛔","Right-click, copy and paste are disabled."],["⚠️",`Each violation deducts ${PENALTY_PT} mark from your final score.`],["🚫",`${MAX_VIOL} violations = immediate auto-submission.`],["⏰","Exam auto-submits when the timer reaches zero."],["💾","Your score is saved and sent to your teacher instantly."]].map(([ic,tx],i)=>(
+          {[
+            ["✅","Each correct answer = 1 mark. Maximum: 20 marks."],
+            ["✅","Navigate freely between questions using the palette."],
+            ["✅","You may change any answer before final submission."],
+            ["🔒","Your Student ID is now locked to this device — no other device can use it."],
+            ["⛔","Do NOT switch browser tabs — this triggers a cheat violation."],
+            ["⛔","Do NOT minimise or switch to another window — violation."],
+            ["⛔","Right-click, copy and paste are disabled."],
+            ["⚠️",`Each violation deducts ${PENALTY_PT} mark from your final score.`],
+            ["🚫",`${MAX_VIOL} violations = immediate auto-submission.`],
+            ["⏰","Exam auto-submits when the timer reaches zero."],
+            ["💾","Your score is saved and sent to your teacher instantly."],
+          ].map(([ic,tx],i)=>(
             <div key={i} style={{display:"flex",gap:"9px",padding:"7px 0",borderBottom:i<10?"1px solid #f1f5f9":"none",alignItems:"flex-start"}}>
               <span style={{fontSize:"12px",minWidth:"16px",lineHeight:"1.5"}}>{ic}</span>
               <span style={{fontSize:"12px",color:"#374151",lineHeight:"1.5"}}>{tx}</span>
@@ -333,6 +510,9 @@ function App(){
     </div>
   );
 
+  /* ════════════════════════════════════════════════════════
+     EXAM
+  ════════════════════════════════════════════════════════ */
   if(screen==="exam"&&q)return(
     <div style={{minHeight:"100vh",background:BG,fontFamily:FF,userSelect:"none",WebkitUserSelect:"none"}}>
       {violMsg&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999,padding:"20px"}}>
@@ -356,13 +536,17 @@ function App(){
           </div>
         </div>
       </div>}
+
+      {/* Top bar */}
       <div style={{background:`linear-gradient(135deg,${NAV},#2d4f8a)`,padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",position:"sticky",top:0,zIndex:100,boxShadow:"0 2px 12px rgba(0,0,0,0.25)"}}>
         <div style={{color:"#fff",minWidth:0,flex:"1 1 0"}}><div style={{fontWeight:"700",fontSize:"12px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{student.name}</div><div style={{fontSize:"10px",opacity:0.6}}>{student.sid}</div></div>
         <div style={{textAlign:"center",flex:"0 0 auto"}}><div style={{fontSize:"24px",fontWeight:"900",color:timerClr,letterSpacing:"2px",textShadow:timeLeft<300?"0 0 10px rgba(239,68,68,0.5)":"none"}}>{fmt(timeLeft)}</div><div style={{fontSize:"8.5px",color:"rgba(255,255,255,0.45)"}}>REMAINING</div></div>
         <div style={{color:"#fff",textAlign:"right",flex:"1 1 0"}}><div style={{fontSize:"11px",fontWeight:"700"}}>{answered}/{total} answered</div>{viol>0&&<div style={{fontSize:"10px",color:"#fca5a5"}}>⚠️ {viol} violation{viol>1?"s":""}</div>}</div>
       </div>
       <div style={{height:"4px",background:"rgba(0,0,0,0.08)"}}><div style={{height:"100%",width:`${timerPct}%`,background:timerClr,transition:"width 1s linear"}}/></div>
+
       <div style={{maxWidth:"800px",margin:"0 auto",padding:"14px"}}>
+        {/* Navigator */}
         <div style={{...card,padding:"13px",marginBottom:"12px"}}>
           <p style={{margin:"0 0 8px",fontSize:"9.5px",fontWeight:"700",color:"#888",textTransform:"uppercase",letterSpacing:"0.5px"}}>Question Navigator — tap to jump</p>
           <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>
@@ -372,6 +556,8 @@ function App(){
             {[["#22c55e","Answered"],["#f1f5f9","Not yet"],[NAV,"Current"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"9px",height:"9px",borderRadius:"2px",background:c}}/><span style={{fontSize:"9.5px",color:"#888"}}>{l}</span></div>)}
           </div>
         </div>
+
+        {/* Question card */}
         <div style={{...card,padding:"22px",marginBottom:"12px"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"13px"}}>
             <span style={{...badge(NAV,GOLD)}}>{q.topic}</span>
@@ -379,23 +565,33 @@ function App(){
           </div>
           <p style={{margin:"0 0 20px",fontSize:"15px",color:NAV,fontWeight:"600",lineHeight:"1.7"}}>{q.q}</p>
           <div style={{display:"flex",flexDirection:"column",gap:"9px"}}>
-            {q.sOpts.map((opt,oi)=>{const letter=["A","B","C","D"][oi],sel=answers[q.id]===opt;return(
-              <div key={oi} onClick={()=>{const na={...aRef.current,[q.id]:opt};setAnswers(na);aRef.current=na;}} style={{display:"flex",alignItems:"center",gap:"12px",padding:"11px 15px",borderRadius:"10px",border:`2px solid ${sel?NAV:"#e8edf5"}`,background:sel?"#eef1f8":"#fff",cursor:"pointer",transition:"all 0.12s",boxShadow:sel?"0 2px 8px rgba(26,46,90,0.12)":"none"}}>
+            {q.sOpts.map((opt,oi)=>{
+              const letter=["A","B","C","D"][oi],sel=answers[q.id]===opt;
+              return(<div key={oi} onClick={()=>{const na={...aRef.current,[q.id]:opt};setAnswers(na);aRef.current=na;}} style={{display:"flex",alignItems:"center",gap:"12px",padding:"11px 15px",borderRadius:"10px",border:`2px solid ${sel?NAV:"#e8edf5"}`,background:sel?"#eef1f8":"#fff",cursor:"pointer",transition:"all 0.12s",boxShadow:sel?"0 2px 8px rgba(26,46,90,0.12)":"none"}}>
                 <div style={{width:"28px",height:"28px",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"800",fontSize:"11.5px",flexShrink:0,background:sel?NAV:"#f1f5f9",color:sel?GOLD:"#555"}}>{letter}</div>
                 <span style={{fontSize:"13.5px",color:sel?NAV:"#374151",fontWeight:sel?"600":"400",lineHeight:"1.45",flex:1}}>{opt}</span>
                 {sel&&<span style={{color:"#16a34a",fontSize:"16px",fontWeight:"700"}}>✓</span>}
-              </div>);})}
+              </div>);
+            })}
           </div>
         </div>
+
+        {/* Navigation */}
         <div style={{display:"flex",gap:"9px",marginBottom:"9px"}}>
           <button onClick={()=>setCurrent(c=>Math.max(0,c-1))} disabled={current===0} style={{flex:1,padding:"11px",background:"#fff",border:"2px solid #e2e8f0",borderRadius:"9px",fontSize:"13px",fontWeight:"600",color:"#374151",cursor:current===0?"not-allowed":"pointer",opacity:current===0?0.4:1}}>← Prev</button>
-          {current<total-1?<button onClick={()=>setCurrent(c=>c+1)} style={{flex:2,padding:"11px",background:NAV,border:"none",borderRadius:"9px",fontSize:"13px",fontWeight:"600",color:"#fff",cursor:"pointer"}}>Next →</button>:<button onClick={()=>setCSub(true)} style={{flex:2,padding:"11px",background:`linear-gradient(135deg,${GOLD},#c98010)`,border:"none",borderRadius:"9px",fontSize:"13px",fontWeight:"700",color:NAV,cursor:"pointer"}}>🏁 Submit Exam</button>}
+          {current<total-1
+            ?<button onClick={()=>setCurrent(c=>c+1)} style={{flex:2,padding:"11px",background:NAV,border:"none",borderRadius:"9px",fontSize:"13px",fontWeight:"600",color:"#fff",cursor:"pointer"}}>Next →</button>
+            :<button onClick={()=>setCSub(true)} style={{flex:2,padding:"11px",background:`linear-gradient(135deg,${GOLD},#c98010)`,border:"none",borderRadius:"9px",fontSize:"13px",fontWeight:"700",color:NAV,cursor:"pointer"}}>🏁 Submit Exam</button>
+          }
         </div>
         {current<total-1&&<button onClick={()=>setCSub(true)} style={{width:"100%",padding:"11px",background:`linear-gradient(135deg,${GOLD},#c98010)`,border:"none",borderRadius:"9px",fontSize:"13px",fontWeight:"700",color:NAV,cursor:"pointer"}}>🏁 Submit Exam ({answered}/{total} answered)</button>}
       </div>
     </div>
   );
 
+  /* ════════════════════════════════════════════════════════
+     RESULT
+  ════════════════════════════════════════════════════════ */
   if(screen==="result"&&result){
     const gcol=gc(result.grade),emoji=result.grade==="A"?"🏆":result.grade==="B"?"🥈":result.grade==="C"?"🥉":"📊";
     return(
@@ -432,29 +628,39 @@ function App(){
     );
   }
 
+  /* ════════════════════════════════════════════════════════
+     ADMIN DASHBOARD
+  ════════════════════════════════════════════════════════ */
   if(screen==="admin"){
     const avg=allScores.length?(allScores.reduce((a,s)=>a+s.finalScore,0)/allScores.length).toFixed(1):"—";
     const passes=allScores.filter(s=>["A","B","C"].includes(s.grade)).length;
     const sorted=[...filteredScores].sort((a,b)=>b.finalScore-a.finalScore);
     const gc2=g=>allScores.filter(s=>s.grade===g).length;
-    const totalReg=Object.keys(REGISTRY).length;
-    const notYet=totalReg-allScores.length;
+    const totalReg=Object.keys(mergedReg).length;
+    const notYet=Object.keys(mergedReg).filter(id=>!allScores.find(s=>s.sid===id)).length;
+    const usedIds=new Set([...Object.keys(REGISTRY),...Object.keys(dynReg)]);
     return(
       <div style={{minHeight:"100vh",background:BG,fontFamily:FF,padding:"18px",userSelect:"none"}}>
         <div style={{maxWidth:"1060px",margin:"0 auto"}}>
+
+          {/* Header */}
           <div style={{background:`linear-gradient(135deg,${NAV},#2d4f8a)`,borderRadius:"13px",padding:"18px 22px",marginBottom:"16px",display:"flex",justifyContent:"space-between",alignItems:"center",boxShadow:"0 4px 16px rgba(26,46,90,0.25)",flexWrap:"wrap",gap:"12px"}}>
             <div><h1 style={{margin:"0 0 3px",fontSize:"17px",fontWeight:"800",color:"#fff"}}>🔐 Teacher Admin Dashboard</h1><p style={{margin:0,fontSize:"11px",color:"rgba(255,255,255,0.55)"}}>SS 2A Further Mathematics CBT — Live Score Portal</p></div>
             <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
               <button onClick={()=>exportCSV(allScores)} style={{padding:"7px 14px",background:GOLD,color:NAV,border:"none",borderRadius:"7px",fontSize:"12px",fontWeight:"700",cursor:"pointer"}}>⬇️ Export CSV</button>
-              <button onClick={async()=>{setLoading(true);setAll(await getAllScores());setLoading(false);setGMsg("✅ Refreshed.");}} style={{padding:"7px 14px",background:"rgba(255,255,255,0.12)",color:"#fff",border:"1px solid rgba(255,255,255,0.2)",borderRadius:"7px",fontSize:"12px",cursor:"pointer"}}>🔄 Refresh</button>
-              <button onClick={()=>{setScreen("login");setLAdmin("");setLSid("");setErr("");setGMsg("");}} style={{padding:"7px 14px",background:"rgba(255,255,255,0.1)",color:"#fff",border:"1px solid rgba(255,255,255,0.2)",borderRadius:"7px",fontSize:"12px",cursor:"pointer"}}>← Log Out</button>
+              <button onClick={async()=>{setLoading(true);const[sc,dr]=await Promise.all([getAllScores(),getDynRegistry()]);setAll(sc);setDynReg(dr);setLoading(false);setGMsg("✅ Refreshed.");}} style={{padding:"7px 14px",background:"rgba(255,255,255,0.12)",color:"#fff",border:"1px solid rgba(255,255,255,0.2)",borderRadius:"7px",fontSize:"12px",cursor:"pointer"}}>🔄 Refresh</button>
+              <button onClick={()=>{setScreen("login");setLAdmin("");setLSid("");setErr("");setGMsg("");setRegMsg({txt:"",ok:true});}} style={{padding:"7px 14px",background:"rgba(255,255,255,0.1)",color:"#fff",border:"1px solid rgba(255,255,255,0.2)",borderRadius:"7px",fontSize:"12px",cursor:"pointer"}}>← Log Out</button>
             </div>
           </div>
+
+          {/* Stats */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:"10px",marginBottom:"14px"}}>
             {[["📋",totalReg,"Registered"],["👥",allScores.length,"Sat Exam"],["⏳",notYet,"Pending"],["✅",passes,"Passed (C+)"],["📊",avg,"Avg Score"]].map(([ic,v,l])=>(
               <div key={l} style={{...card,padding:"13px",textAlign:"center"}}><div style={{fontSize:"18px"}}>{ic}</div><div style={{fontSize:"20px",fontWeight:"800",color:NAV}}>{v}</div><div style={{fontSize:"10px",color:"#888"}}>{l}</div></div>
             ))}
           </div>
+
+          {/* Grade distribution */}
           {allScores.length>0&&<div style={{...card,padding:"16px",marginBottom:"14px"}}>
             <p style={{margin:"0 0 10px",fontSize:"12px",fontWeight:"700",color:NAV}}>📈 Grade Distribution</p>
             <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
@@ -466,26 +672,123 @@ function App(){
               );})}
             </div>
           </div>}
+
+          {/* ══ MANAGE REGISTRY PANEL ══════════════════════════ */}
+          <div style={{...card,padding:"18px",marginBottom:"14px",border:`2px solid ${GOLD}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:showReg?"14px":"0"}}>
+              <h3 style={{margin:0,fontSize:"13px",fontWeight:"700",color:NAV}}>👥 Manage Student Registry ({totalReg} students)</h3>
+              <button onClick={()=>setShowReg(r=>!r)} style={{padding:"6px 14px",background:showReg?"#f1f5f9":NAV,color:showReg?NAV:"#fff",border:"none",borderRadius:"7px",fontSize:"12px",fontWeight:"600",cursor:"pointer"}}>
+                {showReg?"▲ Hide":"▼ Open Registry"}
+              </button>
+            </div>
+
+            {showReg&&<>
+              {/* Add Student Form */}
+              <div style={{background:"#f8fafc",borderRadius:"10px",padding:"14px",marginBottom:"14px",border:"1px solid #e2e8f0"}}>
+                <p style={{margin:"0 0 10px",fontSize:"11px",fontWeight:"700",color:NAV,textTransform:"uppercase",letterSpacing:"0.4px"}}>➕ Add New Student</p>
+                <div style={{display:"flex",gap:"9px",flexWrap:"wrap",alignItems:"flex-end"}}>
+                  <div style={{flex:"2 1 180px"}}>
+                    <label style={{display:"block",fontSize:"10px",fontWeight:"700",color:"#555",marginBottom:"4px"}}>FULL NAME *</label>
+                    <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="e.g. Okafor Chukwuemeka"
+                      style={{...bi,fontSize:"13px"}}
+                      onFocus={e=>e.target.style.borderColor=GOLD} onBlur={e=>e.target.style.borderColor="#e2e8f0"}
+                      onKeyDown={e=>e.key==="Enter"&&handleAddStudent()}/>
+                  </div>
+                  <div style={{flex:"1 1 140px"}}>
+                    <label style={{display:"block",fontSize:"10px",fontWeight:"700",color:"#555",marginBottom:"4px"}}>STUDENT ID <span style={{fontWeight:"400",color:"#aaa"}}>(leave blank to auto-generate)</span></label>
+                    <input value={newId} onChange={e=>setNewId(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,6))} placeholder="Auto-generate"
+                      style={{...bi,fontSize:"13px",textTransform:"uppercase",letterSpacing:"1px",fontWeight:"700"}}
+                      onFocus={e=>e.target.style.borderColor=GOLD} onBlur={e=>e.target.style.borderColor="#e2e8f0"}
+                      onKeyDown={e=>e.key==="Enter"&&handleAddStudent()}/>
+                  </div>
+                  <button onClick={handleAddStudent}
+                    style={{padding:"10px 18px",background:`linear-gradient(135deg,${GOLD},#c98010)`,color:NAV,border:"none",borderRadius:"8px",fontSize:"13px",fontWeight:"700",cursor:"pointer",whiteSpace:"nowrap",height:"42px",marginTop:"18px"}}>
+                    ➕ Add Student
+                  </button>
+                </div>
+                {regMsg.txt&&<p style={{margin:"10px 0 0",fontSize:"12px",fontWeight:"600",color:regMsg.ok?"#16a34a":"#dc2626"}}>{regMsg.txt}</p>}
+                <p style={{margin:"8px 0 0",fontSize:"10.5px",color:"#aaa"}}>New students are saved to shared cloud storage and available for login immediately — no file editing needed.</p>
+              </div>
+
+              {/* Full Registry Table */}
+              <p style={{margin:"0 0 8px",fontSize:"11px",fontWeight:"700",color:NAV,textTransform:"uppercase",letterSpacing:"0.4px"}}>📋 Full Registry</p>
+              <div style={{overflowX:"auto",borderRadius:"8px",border:"1px solid #e2e8f0"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:"12px"}}>
+                  <thead>
+                    <tr style={{background:NAV,color:"#fff"}}>
+                      {["#","Student Name","ID","Type","Status","Action"].map(h=>(
+                        <th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:"10.5px",fontWeight:"700",whiteSpace:"nowrap"}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(mergedReg).map(([id,name],i)=>{
+                      const isDyn=!!dynReg[id];
+                      const hasSat=allScores.find(s=>s.sid===id);
+                      return(
+                        <tr key={id} style={{background:i%2===0?"#fff":"#f8fafc",borderBottom:"1px solid #f1f5f9"}}>
+                          <td style={{padding:"8px 12px",color:"#aaa",fontWeight:"600"}}>{i+1}</td>
+                          <td style={{padding:"8px 12px",fontWeight:"700",color:NAV}}>{name}</td>
+                          <td style={{padding:"8px 12px",fontFamily:"monospace",letterSpacing:"1px",fontWeight:"700",color:"#2563eb"}}>{id}</td>
+                          <td style={{padding:"8px 12px"}}>
+                            <span style={{background:isDyn?"#fffaed":"#f0f7ff",color:isDyn?"#92400e":"#1e40af",padding:"2px 8px",borderRadius:"12px",fontSize:"10px",fontWeight:"700"}}>
+                              {isDyn?"🆕 Dynamic":"📌 Base"}
+                            </span>
+                          </td>
+                          <td style={{padding:"8px 12px"}}>
+                            {hasSat
+                              ?<span style={{background:"#f0fdf4",color:"#16a34a",padding:"2px 8px",borderRadius:"12px",fontSize:"10px",fontWeight:"700"}}>✅ Completed</span>
+                              :<span style={{background:"#f1f5f9",color:"#888",padding:"2px 8px",borderRadius:"12px",fontSize:"10px",fontWeight:"600"}}>⏳ Pending</span>
+                            }
+                          </td>
+                          <td style={{padding:"8px 12px"}}>
+                            {isDyn
+                              ?<button onClick={()=>handleRemoveStudent(id)} style={{padding:"4px 10px",background:"#fef2f2",color:"#dc2626",border:"1px solid #fecaca",borderRadius:"6px",fontSize:"10.5px",fontWeight:"600",cursor:"pointer"}}>🗑 Remove</button>
+                              :<span style={{fontSize:"10.5px",color:"#bbb"}}>Base — edit HTML</span>
+                            }
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p style={{margin:"8px 0 0",fontSize:"10.5px",color:"#aaa"}}>
+                📌 <b>Base</b> students are set in the HTML file. 🆕 <b>Dynamic</b> students are added here and stored in the cloud — they can be removed any time.
+              </p>
+            </>}
+          </div>
+
+          {/* Resit + Session Reset */}
           <div style={{...card,padding:"18px",marginBottom:"14px"}}>
             <h3 style={{margin:"0 0 12px",fontSize:"13px",fontWeight:"700",color:NAV}}>🔁 Grant Resit / Reset Session</h3>
             <div style={{display:"flex",gap:"9px",flexWrap:"wrap",alignItems:"flex-end"}}>
               <div style={{flex:"1 1 200px"}}>
-                <label style={{display:"block",fontSize:"10px",fontWeight:"700",color:NAV,marginBottom:"4px",textTransform:"uppercase",letterSpacing:"0.4px"}}>Student ID (e.g. YSWBFG)</label>
+                <label style={{display:"block",fontSize:"10px",fontWeight:"700",color:NAV,marginBottom:"4px",textTransform:"uppercase",letterSpacing:"0.4px"}}>Student ID</label>
                 <input value={gSid} onChange={e=>setGSid(e.target.value.toUpperCase())} placeholder="Enter 6-char Student ID" style={{...bi,textTransform:"uppercase"}} onFocus={e=>e.target.style.borderColor=GOLD} onBlur={e=>e.target.style.borderColor="#e2e8f0"} onKeyDown={e=>e.key==="Enter"&&handleGrant()}/>
-                {REGISTRY[gSid]&&<p style={{margin:"4px 0 0",fontSize:"11px",color:"#16a34a",fontWeight:"600"}}>👤 {REGISTRY[gSid]}</p>}
+                {mergedReg[gSid]&&<p style={{margin:"4px 0 0",fontSize:"11px",color:"#16a34a",fontWeight:"600"}}>👤 {mergedReg[gSid]}</p>}
               </div>
               <button onClick={handleGrant} style={{padding:"10px 16px",background:NAV,color:"#fff",border:"none",borderRadius:"8px",fontSize:"12.5px",fontWeight:"600",cursor:"pointer",whiteSpace:"nowrap",height:"40px",marginTop:"20px"}}>✅ Grant Resit</button>
               <button onClick={()=>gSid&&handleResetSession(gSid)} style={{padding:"10px 16px",background:"#f1f5f9",color:NAV,border:"1.5px solid #e2e8f0",borderRadius:"8px",fontSize:"12.5px",fontWeight:"600",cursor:"pointer",whiteSpace:"nowrap",height:"40px",marginTop:"20px"}}>🔄 Reset Session Only</button>
             </div>
             {gMsg&&<p style={{margin:"10px 0 0",fontSize:"12px",color:"#16a34a",fontWeight:"600"}}>{gMsg}</p>}
-            <p style={{margin:"8px 0 0",fontSize:"10.5px",color:"#aaa"}}><b>Grant Resit</b>: clears score + unlocks ID for another attempt. <b>Reset Session</b>: only frees a stuck session lock (no score change).</p>
+            <p style={{margin:"8px 0 0",fontSize:"10.5px",color:"#aaa"}}>
+              <b>Grant Resit</b>: clears score + unlocks ID for another attempt.
+              <b> Reset Session</b>: only frees a stuck session lock (no score change).
+            </p>
           </div>
+
+          {/* Results table */}
           <div style={{...card,overflow:"hidden"}}>
             <div style={{padding:"13px 18px",borderBottom:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center",gap:"12px",flexWrap:"wrap"}}>
               <h3 style={{margin:0,fontSize:"13px",fontWeight:"700",color:NAV}}>📋 Results — {allScores.length}/{totalReg} students</h3>
               <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search name or ID…" style={{...bi,width:"200px",padding:"7px 12px",fontSize:"12px"}} onFocus={e=>e.target.style.borderColor=GOLD} onBlur={e=>e.target.style.borderColor="#e2e8f0"}/>
             </div>
-            {loading?(<div style={{padding:"40px",textAlign:"center",color:"#999"}}>⏳ Loading…</div>):allScores.length===0?(<div style={{padding:"40px",textAlign:"center",color:"#bbb"}}><div style={{fontSize:"36px",marginBottom:"8px"}}>📭</div><p style={{margin:0,fontSize:"13px"}}>No students have completed the exam yet.</p></div>):(
+            {loading?(
+              <div style={{padding:"40px",textAlign:"center",color:"#999"}}>⏳ Loading…</div>
+            ):allScores.length===0?(
+              <div style={{padding:"40px",textAlign:"center",color:"#bbb"}}><div style={{fontSize:"36px",marginBottom:"8px"}}>📭</div><p style={{margin:0,fontSize:"13px"}}>No students have completed the exam yet.</p></div>
+            ):(
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
                   <thead><tr style={{background:NAV,color:"#fff"}}>{["#","Name","ID","Score","Pct","Grade","Violations","Penalty","Time","Date"].map(h=><th key={h} style={{padding:"9px 11px",textAlign:"left",fontSize:"10.5px",fontWeight:"700",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
@@ -507,14 +810,17 @@ function App(){
               </div>
             )}
           </div>
+
+          {/* Pending students */}
           {notYet>0&&<div style={{...card,padding:"16px",marginTop:"14px"}}>
             <h3 style={{margin:"0 0 12px",fontSize:"13px",fontWeight:"700",color:NAV}}>⏳ Students Yet to Sit ({notYet})</h3>
             <div style={{display:"flex",flexWrap:"wrap",gap:"6px"}}>
-              {Object.entries(REGISTRY).filter(([id])=>!allScores.find(s=>s.sid===id)).map(([id,name])=>(
+              {Object.entries(mergedReg).filter(([id])=>!allScores.find(s=>s.sid===id)).map(([id,name])=>(
                 <span key={id} style={{background:"#f1f5f9",color:"#555",padding:"4px 10px",borderRadius:"20px",fontSize:"11px",fontWeight:"600"}}>{id} — {name}</span>
               ))}
             </div>
           </div>}
+
           <p style={{textAlign:"center",fontSize:"10.5px",color:"#aaa",marginTop:"14px",lineHeight:"1.7"}}>
             Scores are stored in shared cloud storage — accessible from any device with the admin code.<br/>
             Use Export CSV to download a permanent spreadsheet copy.
