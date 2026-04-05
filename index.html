@@ -447,7 +447,45 @@ function App(){
           style={{width:"100%",padding:"14px",background:`linear-gradient(135deg,${NAV},#2d4f8a)`,color:"#fff",border:"none",borderRadius:"10px",fontSize:"15px",fontWeight:"700",cursor:loading?"not-allowed":"pointer",opacity:loading?0.7:1,boxShadow:"0 4px 14px rgba(26,46,90,0.35)"}}>
           {loading?"⏳ Verifying…":lAdmin?"🔐 Admin Login":"🚀 Enter Exam"}
         </button>
+        <button
+  onClick={async () => {
+    const sid = lSid.trim().toUpperCase();
 
+    if (!sid) {
+      setErr("Enter your Student ID first.");
+      return;
+    }
+
+    if (!ID_REGEX.test(sid)) {
+      setErr("Invalid ID format.");
+      return;
+    }
+
+    const res = await getScore(sid);
+
+    if (!res) {
+      setErr("No saved result found for this ID.");
+      return;
+    }
+
+    setResult(res);
+    setStudent({ name: res.name, sid: res.sid });
+    setScreen("result");
+  }}
+  style={{
+    width: "100%",
+    marginTop: "10px",
+    padding: "12px",
+    background: "#16a34a",
+    color: "#fff",
+    border: "none",
+    borderRadius: "10px",
+    fontWeight: "700",
+    cursor: "pointer"
+  }}
+>
+  📊 Check My Result
+</button>
         <div style={{marginTop:"16px",background:"#f8fafc",borderRadius:"8px",padding:"12px 14px"}}>
           <p style={{fontSize:"10.5px",color:"#888",lineHeight:"1.7",margin:0}}>
             🔒 <b>One sitting per student</b> — your ID is locked once the exam starts.<br/>
@@ -627,7 +665,26 @@ function App(){
       </div>
     );
   }
-
+      <button
+  onClick={() => {
+    setScreen("login");
+    setLSid("");
+    setAutoName("");
+  }}
+  style={{
+    marginTop: "16px",
+    padding: "12px",
+    width: "100%",
+    background: "#1a2e5a",
+    color: "#fff",
+    border: "none",
+    borderRadius: "10px",
+    fontWeight: "700",
+    cursor: "pointer"
+  }}
+>
+  🔙 Back to Login
+</button>
   /* ════════════════════════════════════════════════════════
      ADMIN DASHBOARD
   ════════════════════════════════════════════════════════ */
